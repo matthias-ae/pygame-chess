@@ -27,7 +27,10 @@ class Pt:
 		return Pt(fac * self.x, fac * self.y)
 
 	def __floordiv__(self, denom):
-		return Pt(self.x // denom, self.y // denom)
+		try:
+			return Pt(self.x // denom.x, self.y // denom.y)
+		except AttributeError:
+			return Pt(self.x // denom, self.y // denom)
 
 	def __iter__(self):
 		yield self.x
@@ -58,3 +61,8 @@ class Board(chess.Board):
 
 	def size(self):
 		return self._empty_board.get_size()
+
+	def select(self, cursor):
+		pos = (Pt(*cursor) - self._border) // self._symbol_size
+		if 0 <= pos.x < 8 and 0 <= pos.y < 8:
+			return chess.parse_square('abcdefgh'[pos.x] + str(8-pos.y))
