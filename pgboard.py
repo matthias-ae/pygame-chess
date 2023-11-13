@@ -46,10 +46,16 @@ class Board(chess.Board):
 			self._symbol_size = Pt(*self._symbol[letter].get_size())
 		self._empty_board = _svg2image(chess.svg.board())
 		self._border = (Pt(*self._empty_board.get_size()) - 8 * self._symbol_size) // 2
+		self._highlight = pygame.Surface(tuple(self._symbol_size))
+		self._highlight.fill(pygame.Color(255, 255, 0))
+		self._highlight.set_alpha(65)
+		self._highlighted = []
 
 	def draw(self, screen):
 		screen.blit(self._empty_board, (0, 0))
 		pos = Pt(0, 0)
+		for square in self._highlighted:
+			screen.blit(self._highlight, tuple(self._symbol_size * Pt(chess.square_file(square), 7-chess.square_rank(square)) + self._border))
 		for c in str(self):
 			if c == '\n':
 				pos.y += 1
@@ -65,4 +71,7 @@ class Board(chess.Board):
 	def select(self, cursor):
 		pos = (Pt(*cursor) - self._border) // self._symbol_size
 		if 0 <= pos.x < 8 and 0 <= pos.y < 8:
-			return chess.parse_square('abcdefgh'[pos.x] + str(8-pos.y))
+			return chess.square(pos.x, 7-pos.y)
+
+	def highlight(self, squares):
+		self._highlighted = squares
