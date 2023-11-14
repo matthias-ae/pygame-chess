@@ -26,27 +26,26 @@ def make_move(move):
 	else:
 		print('Invalid move:', move)
 
-running = True
 from_square = None
-while running:
-	for event in pygame.event.get():
-		if event.type == pygame.QUIT:
-			running = False
-		elif event.type == pygame.KEYDOWN:
-			result = engine.play(board, chess.engine.Limit(time=0.1))
-			make_move(result.move)
-		elif event.type == pygame.MOUSEBUTTONDOWN and not from_square:
-			from_square = board.select(event.pos)
-			board.highlight([from_square])
-			board.draw(screen)
-			pygame.display.flip()
-		elif event.type == pygame.MOUSEBUTTONUP and from_square: # to-square => make move
-			to_square = board.select(event.pos)
-			if to_square and to_square != from_square:
-				move = chess.Move(from_square, to_square)
-				print(move)
-				make_move(move)
-				from_square = None
+while True:
+	event = pygame.event.wait()
+	if event.type == pygame.QUIT:
+		break
+	elif event.type == pygame.KEYDOWN:
+		result = engine.play(board, chess.engine.Limit(time=0.1))
+		make_move(result.move)
+	elif event.type == pygame.MOUSEBUTTONDOWN and not from_square:
+		from_square = board.select(event.pos)
+		board.highlight([from_square])
+		board.draw(screen)
+		pygame.display.flip()
+	elif event.type == pygame.MOUSEBUTTONUP and from_square: # to-square => make move
+		to_square = board.select(event.pos)
+		if to_square and to_square != from_square:
+			move = chess.Move(from_square, to_square)
+			print(move)
+			make_move(move)
+			from_square = None
 
 engine.quit()
 pygame.quit()
