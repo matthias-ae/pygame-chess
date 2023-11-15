@@ -8,9 +8,6 @@ class Book:
 	def __init__(self, book_path):
 		self.db = TinyDB(book_path)
 
-	def __getattr__(self, attr):
-		return getattr(self.db, attr)
-
 	def lookup(self, board):
 		def average(lst):
 			return sum(lst) // len(lst)
@@ -48,7 +45,7 @@ class Engine:
 		except Exception as e:
 			pass
 		if not 'depth' in self.best or self.best['depth'] < 50:
-			self.analysis = self.wrapper.analysis(board)
+			self.analysis = self.wrapper.analysis(board.board)
 			self.running = True
 			self.db_id = None
 
@@ -83,7 +80,7 @@ class Engine:
 
 pygame.init()
 print()
-board = pgboard.Board()
+board = pgboard.Board(piece_size=64)
 
 screen = pygame.display.set_mode(board.size())
 board.draw(screen)
@@ -131,7 +128,7 @@ while True:
 			pygame.display.flip()
 		else:
 			engine.stop_analysis()
-			result = engine.play(board, chess.engine.Limit(time=0.1))
+			result = engine.play(board.board, chess.engine.Limit(time=0.1))
 			make_move(result.move)
 		engine.start_analysis(board)
 		best = None

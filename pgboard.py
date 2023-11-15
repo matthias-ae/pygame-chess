@@ -6,8 +6,8 @@ import io
 def _svg2image(svg):
 	return pygame.image.load(io.BytesIO(str(svg).encode('utf-8')))
 
-def _make_symbol(letter):
-	return _svg2image(chess.svg.piece(chess.Piece.from_symbol(letter)))
+def _make_symbol(letter, size):
+	return _svg2image(chess.svg.piece(chess.Piece.from_symbol(letter), size))
 
 class Pt:
 	def __init__(self, x, y):
@@ -36,27 +36,37 @@ class Pt:
 		yield self.x
 		yield self.y
 
-class Board(chess.Board):
-	def __init__(self, *args, **kwargs):
-		super(Board, self).__init__(*args, **kwargs)
+	def __str__(self):
+		return "Pt(x=" + str(self.x) + ", y=" + str(self.y) + ")"
+
+class Board:
+	def __init__(self, piece_size=45):
+		self.board = chess.Board()
+
+		default_piece_size = Pt(*_svg2image(chess.svg.piece(chess.Piece.from_symbol('Q'))).get_size())
+		default_border = (Pt(*_svg2image(chess.svg.board()).get_size()) - 8 * default_piece_size) // 2
+		self._border = piece_size * default_border // default_piece_size
 		self._symbol = {}
 		for letter in 'kqrbnp':
-			self._symbol[letter] = _make_symbol(letter)
-			self._symbol[letter.upper()] = _make_symbol(letter.upper())
+			self._symbol[letter] = _make_symbol(letter, piece_size)
+			self._symbol[letter.upper()] = _make_symbol(letter.upper(), piece_size)
 			self._symbol_size = Pt(*self._symbol[letter].get_size())
-		self._empty_board = _svg2image(chess.svg.board())
-		self._border = (Pt(*self._empty_board.get_size()) - 8 * self._symbol_size) // 2
+		self._empty_board = _svg2image(chess.svg.board(size=8*piece_size+2*self._border.x))
+
 		self._highlight = pygame.Surface(tuple(self._symbol_size))
 		self._highlight.fill(pygame.Color(255, 255, 0))
 		self._highlight.set_alpha(65)
 		self._highlighted = []
+
+	def __getattr__(self, attr):
+		return getattr(self.board, attr)
 
 	def draw(self, screen):
 		screen.blit(self._empty_board, (0, 0))
 		pos = Pt(0, 0)
 		for square in self._highlighted:
 			screen.blit(self._highlight, tuple(self._symbol_size * Pt(chess.square_file(square), 7-chess.square_rank(square)) + self._border))
-		for c in str(self):
+		for c in str(self.board):
 			if c == '\n':
 				pos.y += 1
 				pos.x = 0
