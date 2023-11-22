@@ -4,85 +4,120 @@ import pgboard
 import chess.engine
 import sys
 
+def _push(fen, move):
+	p = chess.Board(fen)
+	p.push(chess.Move.from_uci(move))
+	return p.fen()
+
 class Book:
+	to_db = {
+		'fen': lambda f: f,
+		'score': lambda s: s.white().score(),
+		'move': lambda m: m.uci(),
+		'depth': lambda d: d,
+		'multipv': lambda mpv: mpv
+	}
+
 	def __init__(self, book_path):
 		self.db = TinyDB(book_path)
 
-	def lookup(self, board):
+	def lookup(self, fen, multipv=False):
 		def average(lst):
 			return sum(lst) // len(lst)
-		infos = self.db.search(Query().fen == board.fen())
-		depth = max(info['depth'] for info in infos)
-		score = average([info['score'] for info in infos if info['depth'] == depth])
-		return {'score': chess.engine.PovScore(chess.engine.Cp(score), chess.WHITE), 'depth': int(depth)}
-
-	def put(self, id, info):
-		score = info['score'].white().score()
-		depth = info['depth']
-		if id:
-			self.db.update({'depth': depth, 'score': score}, doc_ids=[id])
-			return id
+		if multipv:
+			parent = self.db.search(Query().multipv.exists() & (Query().fen == fen))
+			if parent:
+				return {i+1: self.lookup(_push(fen, move)) | {'move': chess.Move.from_uci(move)} for i, move in enumerate(parent[0]['multipv'])}
 		else:
-			return self.db.insert({'fen': info['fen'], 'depth': depth, 'score': score})
+			info_lst = self.db.search(Query().score.exists() & (Query().fen == fen))
+			if info_lst:
+				depth = max(info['depth'] for info in info_lst)
+				score = average([info['score'] for info in info_lst if info['depth'] == depth])
+				return {'score': chess.engine.PovScore(chess.engine.Cp(score), chess.WHITE), 'depth': depth}
+
+	def put(self, fen, info, multipv=False):
+		if multipv:
+			variations = info
+			for v, info in variations.items():
+				self.put(_push(fen, info['move'].uci()), info)
+			self.put(fen, {'depth': min(info['depth'] for info in variations.values()), 'multipv': [variations[v]['move'].uci() for v in sorted(variations.keys())]})
+		else:
+			info = {key: Book.to_db[key](val) for key, val in info.items() if key in Book.to_db}
+			query = Query().fen == fen
+			for key in ['multipv', 'score']:
+				if key in info:
+					query = getattr(Query(), key).exists() & query
+			existing = self.db.search(query)
+			info = info | {'fen': fen}
+			if existing:
+				if info['depth'] > existing[0]['depth']:
+					print("update", info)
+					self.db.update(info, doc_ids=[existing[0].doc_id])
+			else:
+				print("insert", info)
+				return self.db.insert(info)
 
 class Engine:
 	def __init__(self, uci_path, book=None):
-		self.wrapper = chess.engine.SimpleEngine.popen_uci(uci_path)
-		self.wrapper.configure({'Hash': 256, 'Threads': 2})
-		self.running = False
-		self.best = None
+		self.engine = chess.engine.SimpleEngine.popen_uci(uci_path)
+		self.engine.configure({'Hash': 256, 'Threads': 2})
 		self.book = book
 
 	def __getattr__(self, attr):
-		return getattr(self.wrapper, attr)
+		return getattr(self.engine, attr)
 
 	def start_analysis(self, board, num_moves=1):
-		if self.running:
-			self.stop_analysis()
-		self.best = {'fen': board.fen()}
-		try:
-			self.best.update(self.book.lookup(board))
-		except Exception as e:
-			pass
-		if not 'depth' in self.best or self.best['depth'] < 50:
-			self.analysis = self.wrapper.analysis(board.board)
-			self.running = True
-			self.db_id = None
+		if self.book:
+			initial_values = self.book.lookup(board.fen(), multipv=num_moves > 1)
+			return Analysis(
+				self.engine.analysis(board.board, multipv=num_moves),
+				initial_values if num_moves > 1 or not initial_values else {1: initial_values},
+				lambda info: self.book.put(board.fen(), info if num_moves > 1 else info[1], multipv=num_moves > 1)
+			)
+		else:
+			return Analysis(self.engine.analysis(board.board, multipv=num_moves))
+
+
+class Analysis:
+	def __init__(self, analysis, initial_values=None, callback=None):
+		self.analysis = analysis
+		self.running = True
+		if initial_values:
+			self.results = initial_values
+		else:
+			self.results = {}
+		self.callback = callback
+
+	def stop(self):
+		self.analysis.stop()
+
+	def best_moves(self):
+		self._parse_info()
+		if self.results and self.callback:
+			self.callback(self.results)
+		return self.results
 
 	def _parse_info(self):
-		improved = False
 		while not self.analysis.would_block():
 			info = self.analysis.get()
-			if 'seldepth' in info:
-				if not 'depth' in self.best or info['depth'] > self.best['depth']:
-					self.best.update({'score': info['score'], 'move': [pv.uci() for pv in info['pv'][:2]], 'depth': info['depth']})
-					improved = True
-		return improved
-
-	def stop_analysis(self):
-		if not self.running:
-			return
-		self.analysis.stop()
-		try:
-			self._parse_info()
-		except chess.engine.AnalysisComplete:
-			pass
-		self.running = False
-		return self.analysis.wait()
-
-	def current_best_moves(self):
-		if self.running:
-			improved = self._parse_info()
-			if self.book and improved:
-				self.db_id = self.book.put(self.db_id, self.best)
-		if self.best and 'score' in self.best:
-			return self.best.copy()
+			# if this UCI line has enough usefull information for us
+			if 'score' in info and 'multipv' in info and len(info['pv']) >= 2:
+				info['move'] = info['pv'][0]
+				if not info['multipv'] in self.results or info['depth'] >= self.results[info['multipv']]['depth']:
+					del info['pv']
+					self.results[info['multipv']] = info
+					del info['multipv']
 
 pygame.init()
 print()
 board = pgboard.Board(piece_size=64)
 
-screen = pygame.display.set_mode(board.size())
+font = pygame.font.Font(None, 26)
+sfont = pygame.font.Font(None, 22)
+analysis_surf = pygame.Surface((120, 120))
+analysis_surf.fill((235, 235, 235))
+
+screen = pygame.display.set_mode((board.size()[0] + 200, board.size()[1]))
 board.draw(screen)
 pygame.display.flip()
 
@@ -110,12 +145,21 @@ def make_move(move):
 		board.push(move)
 		board.draw(screen)
 		pygame.display.flip()
+		return True
 	else:
 		print('Invalid move:', move)
 
+def restart_analysis(analysis):
+	if engine:
+		if analysis:
+			analysis.stop()
+		return engine.start_analysis(board, num_moves=5 if help else 1)
+
+
 from_square = None
-best = None
 analysis = None
+help = True
+
 while True:
 	event = pygame.event.wait()
 	if event.type == pygame.QUIT:
@@ -126,12 +170,19 @@ while True:
 			board.pop()
 			board.draw(screen)
 			pygame.display.flip()
-		else:
-			engine.stop_analysis()
+			analysis = restart_analysis(analysis)
+		elif event.key in [pygame.K_RETURN, pygame.K_SPACE]:
+			print(event, type(event.key), event.key)
+			if analysis:
+				analysis.stop()
 			result = engine.play(board.board, chess.engine.Limit(time=0.1))
 			make_move(result.move)
-		engine.start_analysis(board)
-		best = None
+			analysis = engine.start_analysis(board, num_moves=5 if help else 1)
+		elif event.key in [pygame.K_SLASH, pygame.K_QUESTION] or event.unicode == '?':
+			help = not help
+			analysis = restart_analysis(analysis)
+		else:
+			print('unknown key', event.key, event.unicode if hasattr(event, 'unicode') else '')
 	elif event.type == pygame.MOUSEBUTTONDOWN and not from_square:
 		from_square = board.select(event.pos)
 		board.highlight([from_square])
@@ -142,17 +193,36 @@ while True:
 		if to_square and to_square != from_square:
 			move = chess.Move(from_square, to_square)
 			print(move)
-			make_move(move)
-			if engine:
-				engine.start_analysis(board)
-				best = None
+			if make_move(move):
+				analysis = restart_analysis(analysis)
 			from_square = None
 	elif event.type == CHECK_ANALYSIS:
-		prev_best = best
-		best = engine.current_best_moves()
-		if best:
-			if prev_best is None or best['depth'] > prev_best['depth']:
-				print(best['score'], 'depth=' + str(best['depth']))
+		if analysis:
+			top = analysis.best_moves()
+			y = 22
+			screen.blit(analysis_surf, (board.size()[0], 0))
+
+			# help=False: just evaluation of current position
+			if not help:
+				text_screen = sfont.render('depth=' + str(top[1]['depth']), True, (0, 0, 0), (200, 228, 255))
+				screen.blit(text_screen, (board.size()[0] + 3 + 12, 2))
+				score = top[1]['score'].white().score()
+				text_screen = font.render('+' + str(score) if score >= 0 else str(score), True, (20, 20, 20), (235, 235, 235))
+				screen.blit(text_screen, (board.size()[0] + 3 + 16, 32))
+				pygame.display.flip()
+				continue
+
+			# help==True: analysis with top 5 moves
+			for v in sorted(top):
+				text_screen = sfont.render('depth=' + str(top[v]['depth']), True, (0, 0, 0), (200, 228, 255))
+				screen.blit(text_screen, (board.size()[0] + 3 + 12, 2))
+				score = top[v]['score'].white().score()
+				text_screen = font.render('+' + str(score) if score >= 0 else str(score), True, (20, 20, 20), (235, 235, 235))
+				screen.blit(text_screen, (board.size()[0] + 3, y))
+				text_screen = font.render(top[v]['move'].uci(), True, (0, 0, 0), (200, 228, 255))
+				screen.blit(text_screen, (board.size()[0] + 3 + 38, y))
+				y += text_screen.get_size()[1] + 2
+			pygame.display.flip()
 
 if engine:
 	engine.quit()
