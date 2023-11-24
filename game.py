@@ -114,7 +114,7 @@ board = pgboard.Board(piece_size=64)
 
 font = pygame.font.Font(None, 26)
 sfont = pygame.font.Font(None, 22)
-analysis_surf = pygame.Surface((120, 120))
+analysis_surf = pygame.Surface((128, 128))
 analysis_surf.fill((235, 235, 235))
 
 screen = pygame.display.set_mode((board.size()[0] + 200, board.size()[1]))
@@ -181,6 +181,10 @@ while True:
 		elif event.key in [pygame.K_SLASH, pygame.K_QUESTION] or event.unicode == '?':
 			help = not help
 			analysis = restart_analysis(analysis)
+		elif event.key in [pygame.K_TAB, pygame.K_DOWN, pygame.K_UP]:
+			board.flip()
+			board.draw(screen)
+			pygame.display.flip()
 		else:
 			print('unknown key', event.key, event.unicode if hasattr(event, 'unicode') else '')
 	elif event.type == pygame.MOUSEBUTTONDOWN and not from_square:

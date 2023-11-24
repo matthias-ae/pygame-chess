@@ -57,21 +57,27 @@ class Board:
 		self._highlight.fill(pygame.Color(255, 255, 0))
 		self._highlight.set_alpha(65)
 		self._highlighted = []
+		self.flipped = False
 
 	def __getattr__(self, attr):
 		return getattr(self.board, attr)
+
+	def flip(self):
+		self.flipped = not self.flipped
+		self._empty_board = _svg2image(chess.svg.board(size=self._empty_board.get_width(), flipped=self.flipped))
 
 	def draw(self, screen):
 		screen.blit(self._empty_board, (0, 0))
 		pos = Pt(0, 0)
 		for square in self._highlighted:
-			screen.blit(self._highlight, tuple(self._symbol_size * Pt(chess.square_file(square), 7-chess.square_rank(square)) + self._border))
+			square_pos = Pt(chess.square_file(square), 7-chess.square_rank(square))
+			screen.blit(self._highlight, tuple(self._symbol_size * (Pt(7, 7) - square_pos if self.flipped else square_pos) + self._border))
 		for c in str(self.board):
 			if c == '\n':
 				pos.y += 1
 				pos.x = 0
 			if c in self._symbol:
-				screen.blit(self._symbol[c], tuple(self._symbol_size * pos + self._border))
+				screen.blit(self._symbol[c], tuple(self._symbol_size * (Pt(7, 7) - pos if self.flipped else pos) + self._border))
 			if c in self._symbol or c == '.':
 				pos.x += 1
 
@@ -81,7 +87,7 @@ class Board:
 	def select(self, cursor):
 		pos = (Pt(*cursor) - self._border) // self._symbol_size
 		if 0 <= pos.x < 8 and 0 <= pos.y < 8:
-			return chess.square(pos.x, 7-pos.y)
+			return chess.square(7-pos.x, pos.y) if self.flipped else chess.square(pos.x, 7-pos.y)
 
 	def highlight(self, squares):
 		self._highlighted = squares
