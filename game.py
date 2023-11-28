@@ -103,6 +103,7 @@ class Analysis:
 			# if this UCI line has enough usefull information for us
 			if 'score' in info and 'multipv' in info and len(info['pv']) >= 2:
 				info['move'] = info['pv'][0]
+				print(info['score'], info['move'], info['depth'], end='\r')
 				if not info['multipv'] in self.results or info['depth'] >= self.results[info['multipv']]['depth']:
 					del info['pv']
 					self.results[info['multipv']] = info
@@ -166,10 +167,13 @@ while True:
 		break
 	elif event.type == pygame.KEYDOWN:
 		if event.key == pygame.K_BACKSPACE:
-			board.highlight([])
-			board.pop()
-			board.draw(screen)
-			pygame.display.flip()
+			try:
+				board.highlight([])
+				board.pop()
+				board.draw(screen)
+				pygame.display.flip()
+			except IndexError:
+				print('Already at beginning of game')
 			analysis = restart_analysis(analysis)
 		elif event.key in [pygame.K_RETURN, pygame.K_SPACE]:
 			print(event, type(event.key), event.key)
@@ -187,14 +191,14 @@ while True:
 			pygame.display.flip()
 		else:
 			print('unknown key', event.key, event.unicode if hasattr(event, 'unicode') else '')
-	elif event.type == pygame.MOUSEBUTTONDOWN and not from_square:
+	elif event.type == pygame.MOUSEBUTTONDOWN and from_square is None:
 		from_square = board.select(event.pos)
 		board.highlight([from_square])
 		board.draw(screen)
 		pygame.display.flip()
-	elif event.type == pygame.MOUSEBUTTONUP and from_square: # to-square => make move
+	elif event.type == pygame.MOUSEBUTTONUP and from_square is not None: # to-square => make move
 		to_square = board.select(event.pos)
-		if to_square and to_square != from_square:
+		if to_square is not None and to_square != from_square:
 			move = chess.Move(from_square, to_square)
 			print(move)
 			if make_move(move):
