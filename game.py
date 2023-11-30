@@ -20,7 +20,7 @@ class Book:
 	}
 
 	def __init__(self, book_path):
-		self.db = TinyDB(book_path)
+		self.db = TinyDB(book_path, storage=CachingMiddleware(JSONStorage))
 
 	def lookup(self, board, multipv=False):
 		def average(lst):
@@ -42,9 +42,11 @@ class Book:
 	def put(self, board, info, multipv=False):
 		if multipv:
 			variations = info
-			for v, info in variations.items():
-				self.put(_push(board, info['move'].uci()), info)
-			self.put(board, {'depth': min(info['depth'] for info in variations.values()), 'multipv': [variations[v]['move'].uci() for v in sorted(variations.keys())]})
+
+			changed = sum(self.put(_push(board, info['move'].uci()), info) is not None for v, info in variations.items()) \
+			        + (self.put(board, {'depth': min(info['depth'] for info in variations.values()), 'multipv': [variations[v]['move'].uci() for v in sorted(variations.keys())]}) is not None)
+			if changed:
+				self.db.storage.flush()
 		else:
 			info = {key: Book.to_db[key](val) for key, val in info.items() if key in Book.to_db}
 			query = Query().fen == board.fen()
@@ -57,6 +59,7 @@ class Book:
 				if info['depth'] > existing[0]['depth']:
 					print("update", info)
 					self.db.update(info, doc_ids=[existing[0].doc_id])
+					return existing[0].doc_id
 			else:
 				print("insert", info)
 				return self.db.insert(info)
@@ -131,6 +134,8 @@ CHECK_ANALYSIS = pygame.USEREVENT + 1
 book = None
 try:
 	from tinydb import TinyDB, Query
+	from tinydb.storages import JSONStorage
+	from tinydb.middlewares import CachingMiddleware
 	book = Book(sys.argv[2])
 except IndexError:
     print('Not recording analysis: if a file name is provided as additional commanline argument (e.g. `python3 game.py /usr/bin/stockfish book.json`), any analysis results will be saved so next time in the same position they will be available immediately')
