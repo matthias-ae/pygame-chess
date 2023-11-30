@@ -3,11 +3,12 @@ import chess
 import pgboard
 import chess.engine
 import sys
+import random
 
-def _push(fen, move):
-	p = chess.Board(fen)
+def _push(board, move):
+	p = chess.Board(board.fen())
 	p.push(chess.Move.from_uci(move))
-	return p.fen()
+	return p
 
 class Book:
 	to_db = {
@@ -21,34 +22,37 @@ class Book:
 	def __init__(self, book_path):
 		self.db = TinyDB(book_path)
 
-	def lookup(self, fen, multipv=False):
+	def lookup(self, board, multipv=False):
 		def average(lst):
 			return sum(lst) // len(lst)
+		def fix_turn(info):
+			info['score'] = chess.engine.PovScore(info['score'].pov(board.turn), board.turn)
+			return info
 		if multipv:
-			parent = self.db.search(Query().multipv.exists() & (Query().fen == fen))
+			parent = self.db.search(Query().multipv.exists() & (Query().fen == board.fen()))
 			if parent:
-				return {i+1: self.lookup(_push(fen, move)) | {'move': chess.Move.from_uci(move)} for i, move in enumerate(parent[0]['multipv'])}
+				return {i+1: fix_turn(self.lookup(_push(board, move))) | {'move': chess.Move.from_uci(move)} for i, move in enumerate(parent[0]['multipv'])}
 		else:
-			info_lst = self.db.search(Query().score.exists() & (Query().fen == fen))
+			info_lst = self.db.search(Query().score.exists() & (Query().fen == board.fen()))
 			if info_lst:
 				depth = max(info['depth'] for info in info_lst)
 				score = average([info['score'] for info in info_lst if info['depth'] == depth])
 				return {'score': chess.engine.PovScore(chess.engine.Cp(score), chess.WHITE), 'depth': depth}
 
-	def put(self, fen, info, multipv=False):
+	def put(self, board, info, multipv=False):
 		if multipv:
 			variations = info
 			for v, info in variations.items():
-				self.put(_push(fen, info['move'].uci()), info)
-			self.put(fen, {'depth': min(info['depth'] for info in variations.values()), 'multipv': [variations[v]['move'].uci() for v in sorted(variations.keys())]})
+				self.put(_push(board, info['move'].uci()), info)
+			self.put(board, {'depth': min(info['depth'] for info in variations.values()), 'multipv': [variations[v]['move'].uci() for v in sorted(variations.keys())]})
 		else:
 			info = {key: Book.to_db[key](val) for key, val in info.items() if key in Book.to_db}
-			query = Query().fen == fen
+			query = Query().fen == board.fen()
 			for key in ['multipv', 'score']:
 				if key in info:
 					query = getattr(Query(), key).exists() & query
 			existing = self.db.search(query)
-			info = info | {'fen': fen}
+			info = info | {'fen': board.fen()}
 			if existing:
 				if info['depth'] > existing[0]['depth']:
 					print("update", info)
@@ -68,11 +72,11 @@ class Engine:
 
 	def start_analysis(self, board, num_moves=1):
 		if self.book:
-			initial_values = self.book.lookup(board.fen(), multipv=num_moves > 1)
+			initial_values = self.book.lookup(board, multipv=num_moves > 1)
 			return Analysis(
 				self.engine.analysis(board.board, multipv=num_moves),
 				initial_values if num_moves > 1 or not initial_values else {1: initial_values},
-				lambda info: self.book.put(board.fen(), info if num_moves > 1 else info[1], multipv=num_moves > 1)
+				lambda info: self.book.put(board, info if num_moves > 1 else info[1], multipv=num_moves > 1)
 			)
 		else:
 			return Analysis(self.engine.analysis(board.board, multipv=num_moves))
@@ -136,6 +140,7 @@ except Exception as e:
 engine = None
 try:
 	engine = Engine(sys.argv[1], book)
+	analysis = engine.start_analysis(board, num_moves=5)
 	pygame.time.set_timer(CHECK_ANALYSIS, 500)
 except:
 	print('Proceeding without engine: you could provide path to engine as commandline argument (e.g. `python3 game.py /usr/bin/stockfish`), then keypress will make engine move')
@@ -152,13 +157,11 @@ def make_move(move):
 
 def restart_analysis(analysis):
 	if engine:
-		if analysis:
-			analysis.stop()
+		analysis.stop()
 		return engine.start_analysis(board, num_moves=5 if help else 1)
 
 
 from_square = None
-analysis = None
 help = True
 
 while True:
@@ -176,12 +179,12 @@ while True:
 				print('Already at beginning of game')
 			analysis = restart_analysis(analysis)
 		elif event.key in [pygame.K_RETURN, pygame.K_SPACE]:
-			print(event, type(event.key), event.key)
-			if analysis:
-				analysis.stop()
-			result = engine.play(board.board, chess.engine.Limit(time=0.1))
-			make_move(result.move)
-			analysis = engine.start_analysis(board, num_moves=5 if help else 1)
+			thresh = 100
+			variations = analysis.best_moves()
+			variations = [info for v, info in variations.items() if
+					variations[1]['score'].relative.score() - info['score'].relative.score() < thresh]
+			make_move(random.choice(variations)['move'])
+			analysis = restart_analysis(analysis)
 		elif event.key in [pygame.K_SLASH, pygame.K_QUESTION] or event.unicode == '?':
 			help = not help
 			analysis = restart_analysis(analysis)
@@ -190,7 +193,8 @@ while True:
 			board.draw(screen)
 			pygame.display.flip()
 		else:
-			print('unknown key', event.key, event.unicode if hasattr(event, 'unicode') else '')
+			if event.unicode:
+				print('pressed ', event.unicode)
 	elif event.type == pygame.MOUSEBUTTONDOWN and from_square is None:
 		from_square = board.select(event.pos)
 		board.highlight([from_square])
@@ -205,32 +209,31 @@ while True:
 				analysis = restart_analysis(analysis)
 			from_square = None
 	elif event.type == CHECK_ANALYSIS:
-		if analysis:
-			top = analysis.best_moves()
-			y = 22
-			screen.blit(analysis_surf, (board.size()[0], 0))
+		top = analysis.best_moves()
+		y = 22
+		screen.blit(analysis_surf, (board.size()[0], 0))
 
-			# help=False: just evaluation of current position
-			if not help:
-				text_screen = sfont.render('depth=' + str(top[1]['depth']), True, (0, 0, 0), (200, 228, 255))
-				screen.blit(text_screen, (board.size()[0] + 3 + 12, 2))
-				score = top[1]['score'].white().score()
-				text_screen = font.render('+' + str(score) if score >= 0 else str(score), True, (20, 20, 20), (235, 235, 235))
-				screen.blit(text_screen, (board.size()[0] + 3 + 16, 32))
-				pygame.display.flip()
-				continue
-
-			# help==True: analysis with top 5 moves
-			for v in sorted(top):
-				text_screen = sfont.render('depth=' + str(top[v]['depth']), True, (0, 0, 0), (200, 228, 255))
-				screen.blit(text_screen, (board.size()[0] + 3 + 12, 2))
-				score = top[v]['score'].white().score()
-				text_screen = font.render('+' + str(score) if score >= 0 else str(score), True, (20, 20, 20), (235, 235, 235))
-				screen.blit(text_screen, (board.size()[0] + 3, y))
-				text_screen = font.render(top[v]['move'].uci(), True, (0, 0, 0), (200, 228, 255))
-				screen.blit(text_screen, (board.size()[0] + 3 + 38, y))
-				y += text_screen.get_size()[1] + 2
+		# help=False: just evaluation of current position
+		if not help:
+			text_screen = sfont.render('depth=' + str(top[1]['depth']), True, (0, 0, 0), (200, 228, 255))
+			screen.blit(text_screen, (board.size()[0] + 3 + 12, 2))
+			score = top[1]['score'].white().score()
+			text_screen = font.render('+' + str(score) if score >= 0 else str(score), True, (20, 20, 20), (235, 235, 235))
+			screen.blit(text_screen, (board.size()[0] + 3 + 16, 32))
 			pygame.display.flip()
+			continue
+
+		# help==True: analysis with top 5 moves
+		for v in sorted(top):
+			text_screen = sfont.render('depth=' + str(top[v]['depth']), True, (0, 0, 0), (200, 228, 255))
+			screen.blit(text_screen, (board.size()[0] + 3 + 12, 2))
+			score = top[v]['score'].white().score()
+			text_screen = font.render('+' + str(score) if score >= 0 else str(score), True, (20, 20, 20), (235, 235, 235))
+			screen.blit(text_screen, (board.size()[0] + 3, y))
+			text_screen = font.render(top[v]['move'].uci(), True, (0, 0, 0), (200, 228, 255))
+			screen.blit(text_screen, (board.size()[0] + 3 + 38, y))
+			y += text_screen.get_size()[1] + 2
+		pygame.display.flip()
 
 if engine:
 	engine.quit()
