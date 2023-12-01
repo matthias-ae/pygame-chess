@@ -4,6 +4,7 @@ import pgboard
 import chess.engine
 import sys
 import random
+import argparse
 
 def _push(board, move):
 	p = chess.Board(board.fen())
@@ -116,6 +117,11 @@ class Analysis:
 					self.results[info['multipv']] = info
 					del info['multipv']
 
+parser = argparse.ArgumentParser()
+parser.add_argument('-e', '--engine', help='path to UCI chess engine, e.g. /usr/games/stockfish')
+parser.add_argument('-b', '--book', help='Json file for recording and retrieving analysis results')
+args = parser.parse_args()
+
 pygame.init()
 print()
 board = pgboard.Board(piece_size=64)
@@ -132,23 +138,17 @@ pygame.display.flip()
 CHECK_ANALYSIS = pygame.USEREVENT + 1
 
 book = None
-try:
+if args.book:
 	from tinydb import TinyDB, Query
 	from tinydb.storages import JSONStorage
 	from tinydb.middlewares import CachingMiddleware
-	book = Book(sys.argv[2])
-except IndexError:
-    print('Not recording analysis: if a file name is provided as additional commanline argument (e.g. `python3 game.py /usr/bin/stockfish book.json`), any analysis results will be saved so next time in the same position they will be available immediately')
-except Exception as e:
-    print('Not recording analysis:', str(e))
+	book = Book(args.book)
 
 engine = None
-try:
-	engine = Engine(sys.argv[1], book)
+if args.engine:
+	engine = Engine(args.engine, book)
 	analysis = engine.start_analysis(board, num_moves=5)
 	pygame.time.set_timer(CHECK_ANALYSIS, 500)
-except:
-	print('Proceeding without engine: you could provide path to engine as commandline argument (e.g. `python3 game.py /usr/bin/stockfish`), then keypress will make engine move')
 
 def make_move(move):
 	board.highlight([move.from_square, move.to_square])
