@@ -15,8 +15,6 @@ class Book:
 
 	# method currently multipv only!
 	def lookup(self, board):
-		def average(lst):
-			return sum(lst) // len(lst)
 		def fix_turn(score):
 			return chess.engine.PovScore(score.pov(board.turn), board.turn)
 		scores = []
@@ -24,8 +22,9 @@ class Book:
 		for move, value in self.analysis.items():
 			info_lst = value['info']
 			depth = max(info['depth'] for info in info_lst)
-			score = average([info['score'] for info in info_lst if info['depth'] > depth - 5])
-			scores.append((score, {'depth': depth, 'move': chess.Move.from_uci(move)}))
+			score_lst = list(info['score'] for info in info_lst if info['depth'] > depth - 5)
+			score = sum(score_lst) // len(score_lst)
+			scores.append((score, {'depth': depth, 'move': chess.Move.from_uci(move), 'avg': len(score_lst)}))
 			if depth > max_depth:
 				max_depth = depth
 		return {i+1: info | {'score': fix_turn(chess.engine.PovScore(chess.engine.Cp(score), chess.WHITE))} for i, (score, info) in enumerate(sorted(((s, i) for (s, i) in scores if i['depth'] >= max_depth - 1), reverse=board.turn, key=itemgetter(0))) }
