@@ -155,8 +155,15 @@ while True:
 			continue
 		print(", ".join(list("d=" + str(info['depth']) + " " + str(info['score'].white().score()) + "cp " + info['move'].uci() for info in best_moves.values())), end='\r')
 		if book:
-			book.put(board, best_moves)
-			best_moves = book.lookup(board)
+			# don't write easily computeable analysis to data-base
+			if min(info['depth'] for info in best_moves.values()) > 25:
+				book.put(board, best_moves)
+
+			# use book only if results are in data-base (just written or from before)
+			book_moves = book.lookup(board)
+			if book_moves:
+				best_moves = book_moves
+
 		show_analysis(best_moves)
 
 		if args.auto:
