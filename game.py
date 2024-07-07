@@ -24,7 +24,11 @@ def show_analysis(best_moves):
 	else: #help==True: analysis with top 5 moves
 		for v in sorted(best_moves):
 			score = best_moves[v]['score'].white().score()
-			text_screen = font.render('+' + str(score) if score >= 0 else str(score), True, (20, 20, 20), (235, 235, 235))
+			try:
+				text_screen = font.render('+' + str(score) if score >= 0 else str(score), True, (20, 20, 20), (235, 235, 235))
+			except TypeError:
+				print(best_moves[v])
+				continue
 			screen.blit(text_screen, (board.size()[0] + 3, y))
 			text_screen = font.render(best_moves[v]['move'].uci(), True, (0, 0, 0), (200, 228, 255))
 			screen.blit(text_screen, (board.size()[0] + 3 + 38, y))
